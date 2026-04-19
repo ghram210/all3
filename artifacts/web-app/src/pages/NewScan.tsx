@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Globe, Terminal, Zap, Shield, Maximize2 } from "lucide-react";
+import { Globe, Terminal, Zap, Shield, Maximize2, Loader2 } from "lucide-react";
 import { useMutation } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useNavigate } from "react-router-dom";
@@ -7,6 +7,8 @@ import { toast } from "sonner";
 import AppSidebar from "@/components/AppSidebar";
 import TopBar from "@/components/TopBar";
 import { cn } from "@/lib/utils";
+
+const GATEWAY_URL = "http://localhost:8080";
 
 const tools = [
   { key: "NMAP", label: "Nmap", desc: "Network discovery and port scanning", icon: Globe },
@@ -22,28 +24,48 @@ const NewScan = () => {
   const [target, setTarget] = useState("");
   const [description, setDescription] = useState("");
   const [selectedTool, setSelectedTool] = useState("");
+  const [options, setOptions] = useState("");
   const navigate = useNavigate();
 
   const mutation = useMutation({
     mutationFn: async () => {
-      const { error } = await supabase.from("scan_results").insert({
-        name: scanName,
-        target,
-        description,
-        tool: selectedTool,
-        status: "running",
-        started_at: new Date().toISOString(),
-      } as any);
-      if (error) throw error;
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        throw new Error("Not authenticated. Please log in.");
+      }
+
+      const response = await fetch(`${GATEWAY_URL}/scan`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          name: scanName,
+          target,
+          tool: selectedTool,
+          description,
+          options,
+        }),
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({ detail: "Unknown error" }));
+        throw new Error(err.detail || `Gateway error: ${response.status}`);
+      }
+
+      return response.json();
     },
     onSuccess: () => {
-      toast.success("Scan completed successfully!");
+      toast.success("Scan started! Redirecting to results...");
       navigate("/scan-results");
     },
-    onError: () => toast.error("Failed to start scan"),
+    onError: (err: Error) => {
+      toast.error(err.message || "Failed to start scan");
+    },
   });
 
-  const canSubmit = scanName.trim() && target.trim() && selectedTool;
+  const canSubmit = scanName.trim() && target.trim() && selectedTool && !mutation.isPending;
 
   return (
     <div className="flex h-screen bg-background text-foreground">
@@ -51,6 +73,7 @@ const NewScan = () => {
       <div className="flex-1 flex flex-col overflow-hidden">
         <TopBar />
         <main className="flex-1 overflow-y-auto p-6">
+
           {/* Target Configuration */}
           <div className="bg-card border border-border rounded-xl p-6 mb-6">
             <div className="flex items-center gap-2 mb-6">
@@ -78,25 +101,32 @@ const NewScan = () => {
                 />
               </div>
               <div>
-                <label className="text-sm text-muted-foreground mb-1.5 block">Description</label>
-                <textarea
+                <label className="text-sm text-muted-foreground mb-1.5 block">Description (optional)</label>
+                <input
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
-                  placeholder="Describe the purpose of this scan..."
-                  rows={3}
-                  className="w-full bg-background border border-border rounded-lg px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary resize-none"
+                  placeholder="Brief description of this scan"
+                  className="w-full bg-background border border-border rounded-lg px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+              </div>
+              <div>
+                <label className="text-sm text-muted-foreground mb-1.5 block">Extra Options (optional)</label>
+                <input
+                  value={options}
+                  onChange={(e) => setOptions(e.target.value)}
+                  placeholder="e.g. --top-ports 100"
+                  className="w-full bg-background border border-border rounded-lg px-4 py-2.5 text-sm font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                 />
               </div>
             </div>
           </div>
 
-          {/* Select Scan Tool */}
+          {/* Tool Selection */}
           <div className="bg-card border border-border rounded-xl p-6 mb-6">
-            <div className="flex items-center gap-2 mb-6">
+            <div className="flex items-center gap-2 mb-4">
               <Terminal className="w-5 h-5 text-muted-foreground" />
               <h2 className="text-lg font-semibold">Select Scan Tool</h2>
             </div>
-
             <div className="grid grid-cols-3 gap-4">
               {tools.map((tool) => {
                 const Icon = tool.icon;
@@ -123,26 +153,27 @@ const NewScan = () => {
             </div>
           </div>
 
-          {/* Start Scan Button */}
+          {/* Submit */}
           <button
-            disabled={mutation.isPending}
+            disabled={!canSubmit}
             onClick={() => {
               if (!canSubmit) {
-                toast.error("Please fill in all fields and select a scan tool");
+                toast.error("Please fill in Scan Name, Target, and select a tool");
                 return;
               }
-              toast.info("Scan has been initiated...");
               mutation.mutate();
             }}
             className={cn(
               "flex items-center gap-2 px-8 py-3 rounded-lg font-medium text-sm transition-all",
-              "bg-primary text-primary-foreground hover:bg-primary/90"
+              canSubmit
+                ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                : "bg-muted text-muted-foreground cursor-not-allowed opacity-50"
             )}
           >
             {mutation.isPending ? (
               <>
-                <div className="w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
-                Scanning...
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Starting Scan...
               </>
             ) : (
               <>
@@ -154,16 +185,21 @@ const NewScan = () => {
 
           {mutation.isPending && (
             <div className="bg-card border border-primary/30 rounded-xl p-5 mt-4">
-              <div className="flex items-center gap-3 mb-3">
+              <div className="flex items-center gap-3 mb-2">
                 <div className="w-3 h-3 bg-primary rounded-full animate-pulse" />
-                <p className="text-primary font-semibold">Scan in Progress</p>
+                <p className="text-primary font-semibold">Dispatching Scan...</p>
               </div>
-              <p className="text-muted-foreground text-sm">Scanning target <span className="text-foreground font-mono">{target}</span> using <span className="text-primary">{selectedTool}</span>...</p>
-              <div className="w-full bg-muted rounded-full h-1.5 mt-3 overflow-hidden">
-                <div className="bg-primary h-full rounded-full animate-[pulse_1.5s_ease-in-out_infinite]" style={{ width: "60%" }} />
-              </div>
+              <p className="text-muted-foreground text-sm">
+                Sending scan request for <span className="text-foreground font-mono">{target}</span> to the gateway.
+                Results update every 5 seconds in Scan Results.
+              </p>
             </div>
           )}
+
+          <div className="mt-4 text-xs text-muted-foreground bg-muted/30 rounded-lg px-4 py-3 border border-border">
+            <strong>Note:</strong> Scans run in the background. The Scan Results page polls for updates automatically every 5 seconds.
+          </div>
+
         </main>
       </div>
     </div>
