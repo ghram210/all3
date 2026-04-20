@@ -8,7 +8,7 @@ import AppSidebar from "@/components/AppSidebar";
 import TopBar from "@/components/TopBar";
 import { cn } from "@/lib/utils";
 
-const GATEWAY_URL = "http://localhost:8080";
+const GATEWAY_URL = "/api";
 
 const tools = [
   { key: "NMAP", label: "Nmap", desc: "Network discovery and port scanning", icon: Globe },

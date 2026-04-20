@@ -202,4 +202,5 @@ async def get_scan_status(scan_id: str, authorization: str = Header(None)):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8080)
+    port = int(os.environ.get("GATEWAY_PORT", "8090"))
+    uvicorn.run(app, host="0.0.0.0", port=port)
